@@ -10,10 +10,10 @@ import (
 	"net/url"
 	"os/user"
 	"path/filepath"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -114,93 +114,52 @@ func (p *Prometheus) watchPod(ctx context.Context, clientset *kubernetes.Clients
 	podinformer := informerfactory.Core().V1().Pods()
 	podinformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(newObj interface{}) {
-			key, err := cache.MetaNamespaceKeyFunc(newObj)
-			if err != nil {
-				p.Log.Errorf("getting key from cache %s\n", err.Error())
+			pod, success := newObj.(*corev1.Pod)
+			if !success {
+				p.Log.Errorf("Failed to cast object to pod: %v\n", newObj)
+				return
 			}
-
-			namespace, name, err := cache.SplitMetaNamespaceKey(key)
-			if err != nil {
-				p.Log.Errorf("splitting key into namespace and name %s\n", err.Error())
-			}
-
-			pod, _ := clientset.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
-
 			if pod.Annotations["prometheus.io/scrape"] == "true" &&
 				podReady(pod.Status.ContainerStatuses) &&
 				podHasMatchingNamespace(pod, p) &&
 				podHasMatchingLabelSelector(pod, p.podLabelSelector) &&
 				podHasMatchingFieldSelector(pod, p.podFieldSelector) {
-				registerPod(pod, p)
+				if pod.GetDeletionTimestamp() == nil {
+					registerPod(pod, p)
+				} else {
+					unregisterPod(pod, p)
+				}
+			} else {
+				p.Log.Debugf("Not registering pod %s/%s\n", pod.Namespace, pod.Name)
 			}
 		},
 		UpdateFunc: func(oldObj, newObj interface{}) {
-			newKey, err := cache.MetaNamespaceKeyFunc(newObj)
-			if err != nil {
-				p.Log.Errorf("getting key from cache %s\n", err.Error())
+			pod, success := newObj.(*corev1.Pod)
+			if !success {
+				p.Log.Errorf("Failed to cast object to pod: %v\n", newObj)
+				return
 			}
-
-			newNamespace, newName, err := cache.SplitMetaNamespaceKey(newKey)
-			if err != nil {
-				p.Log.Errorf("splitting key into namespace and name %s\n", err.Error())
-			}
-
-			newPod, _ := clientset.CoreV1().Pods(newNamespace).Get(ctx, newName, metav1.GetOptions{})
-
-			if newPod.Annotations["prometheus.io/scrape"] == "true" &&
-				podReady(newPod.Status.ContainerStatuses) &&
-				podHasMatchingNamespace(newPod, p) &&
-				podHasMatchingLabelSelector(newPod, p.podLabelSelector) &&
-				podHasMatchingFieldSelector(newPod, p.podFieldSelector) {
-				if newPod.GetDeletionTimestamp() == nil {
-					registerPod(newPod, p)
-				}
-			}
-
-			oldKey, err := cache.MetaNamespaceKeyFunc(oldObj)
-			if err != nil {
-				p.Log.Errorf("getting key from cache %s\n", err.Error())
-			}
-
-			oldNamespace, oldName, err := cache.SplitMetaNamespaceKey(oldKey)
-			if err != nil {
-				p.Log.Errorf("splitting key into namespace and name %s\n", err.Error())
-			}
-
-			oldPod, _ := clientset.CoreV1().Pods(oldNamespace).Get(ctx, oldName, metav1.GetOptions{})
-
-			if oldPod.Annotations["prometheus.io/scrape"] == "true" &&
-				podReady(oldPod.Status.ContainerStatuses) &&
-				podHasMatchingNamespace(oldPod, p) &&
-				podHasMatchingLabelSelector(oldPod, p.podLabelSelector) &&
-				podHasMatchingFieldSelector(oldPod, p.podFieldSelector) {
-				if oldPod.GetDeletionTimestamp() != nil {
-					unregisterPod(oldPod, p)
-				}
-			}
-		},
-		DeleteFunc: func(oldObj interface{}) {
-			key, err := cache.MetaNamespaceKeyFunc(oldObj)
-			if err != nil {
-				p.Log.Errorf("getting key from cache %s", err.Error())
-			}
-
-			namespace, name, err := cache.SplitMetaNamespaceKey(key)
-			if err != nil {
-				p.Log.Errorf("splitting key into namespace and name %s\n", err.Error())
-			}
-
-			pod, _ := clientset.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
-
 			if pod.Annotations["prometheus.io/scrape"] == "true" &&
 				podReady(pod.Status.ContainerStatuses) &&
 				podHasMatchingNamespace(pod, p) &&
 				podHasMatchingLabelSelector(pod, p.podLabelSelector) &&
 				podHasMatchingFieldSelector(pod, p.podFieldSelector) {
-				if pod.GetDeletionTimestamp() != nil {
+				if pod.GetDeletionTimestamp() == nil {
+					registerPod(pod, p)
+				} else {
 					unregisterPod(pod, p)
 				}
+			} else {
+				p.Log.Debugf("Not registering pod %s/%s\n", pod.Namespace, pod.Name)
 			}
+		},
+		DeleteFunc: func(oldObj interface{}) {
+			pod, success := oldObj.(*corev1.Pod)
+			if !success {
+				p.Log.Errorf("Failed to cast object to pod: %v\n", oldObj)
+				return
+			}
+			unregisterPod(pod, p)
 		},
 	})
 
@@ -365,11 +324,12 @@ func registerPod(pod *corev1.Pod, p *Prometheus) {
 
 	p.Log.Debugf("will scrape metrics from %q", targetURL.String())
 	// add annotation as metrics tags
-	tags := pod.Annotations
-	if tags == nil {
-		tags = map[string]string{}
-	}
-
+	// SaS: removed pod annotations and labels as tags, there is no value in them; they can actually
+	// cause problems if there is an overlap of metric labels and pod annotations or labels
+	tags := map[string]string{}
+	//if tags == nil {
+	//	tags = map[string]string{}
+	//}
 	tags["pod_name"] = pod.Name
 	podNamespace := "namespace"
 	if p.PodNamespaceLabelName != "" {
@@ -378,9 +338,17 @@ func registerPod(pod *corev1.Pod, p *Prometheus) {
 	tags[podNamespace] = pod.Namespace
 
 	// add labels as metrics tags
-	for k, v := range pod.Labels {
-		tags[k] = v
+	//for k, v := range pod.Labels {
+	//	tags[k] = v
+	//}
+
+	if len(pod.OwnerReferences) == 1 && pod.OwnerReferences[0].Kind == "ReplicaSet" {
+		replicaSetName := pod.OwnerReferences[0].Name
+		lastDash := strings.LastIndex(replicaSetName, "-")
+		deploymentName := replicaSetName[:lastDash-1]
+		tags["deployment_name"] = deploymentName
 	}
+
 	podURL := p.AddressToURL(targetURL, targetURL.Hostname())
 
 	// Locks earlier if using cAdvisor calls - makes a new list each time
