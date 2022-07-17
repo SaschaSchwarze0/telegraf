@@ -13,6 +13,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -374,11 +375,12 @@ func registerPod(pod *corev1.Pod, p *Prometheus) {
 
 	p.Log.Debugf("will scrape metrics from %q", targetURL.String())
 	// add annotation as metrics tags
-	tags := pod.Annotations
-	if tags == nil {
-		tags = map[string]string{}
-	}
-
+	// SaS: removed pod annotations and labels as tags, there is no value in them; they can actually
+	// cause problems if there is an overlap of metric labels and pod annotations or labels
+	tags := map[string]string{}
+	//if tags == nil {
+	//	tags = map[string]string{}
+	//}
 	tags["pod_name"] = pod.Name
 	podNamespace := "namespace"
 	if p.PodNamespaceLabelName != "" {
@@ -387,9 +389,17 @@ func registerPod(pod *corev1.Pod, p *Prometheus) {
 	tags[podNamespace] = pod.Namespace
 
 	// add labels as metrics tags
-	for k, v := range pod.Labels {
-		tags[k] = v
+	//for k, v := range pod.Labels {
+	//	tags[k] = v
+	//}
+
+	if len(pod.OwnerReferences) == 1 && pod.OwnerReferences[0].Kind == "ReplicaSet" {
+		replicaSetName := pod.OwnerReferences[0].Name
+		lastDash := strings.LastIndex(replicaSetName, "-")
+		deploymentName := replicaSetName[:lastDash-1]
+		tags["deployment_name"] = deploymentName
 	}
+
 	podURL := p.AddressToURL(targetURL, targetURL.Hostname())
 
 	// Locks earlier if using cAdvisor calls - makes a new list each time
