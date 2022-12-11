@@ -204,7 +204,8 @@ require (
 	gopkg.in/yaml.v2 v2.4.0
 	k8s.io/api v0.27.4
 	k8s.io/apimachinery v0.27.4
-	k8s.io/client-go v0.27.2
+	k8s.io/client-go v0.27.4
+	k8s.io/metrics v0.27.4
 	layeh.com/radius v0.0.0-20221205141417-e7fbddd11d68
 	modernc.org/sqlite v1.24.0
 )
@@ -453,7 +454,7 @@ require (
 	golang.org/x/time v0.3.0 // indirect
 	golang.org/x/tools v0.10.0 // indirect
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
-	golang.zx2c4.com/wireguard v0.0.0-20211209221555-9c9e7e272434 // indirect
+	golang.zx2c4.com/wireguard v0.0.0-20220407013110-ef5c587f782d // indirect
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/genproto v0.0.0-20230706204954-ccb25ca9f130 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20230720185612-659f7aaaa771 // indirect
