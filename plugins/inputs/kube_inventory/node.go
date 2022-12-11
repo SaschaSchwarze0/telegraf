@@ -30,6 +30,8 @@ func (ki *KubernetesInventory) gatherNode(n corev1.Node, acc telegraf.Accumulato
 		case "cpu":
 			fields["capacity_cpu_cores"] = ki.convertQuantity(val.String(), 1)
 			fields["capacity_millicpu_cores"] = ki.convertQuantity(val.String(), 1000)
+		case "ephemeral-storage":
+			fields["capacity_ephemeral_storage_bytes"] = ki.convertQuantity(val.String(), 1)
 		case "memory":
 			fields["capacity_memory_bytes"] = ki.convertQuantity(val.String(), 1)
 		case "pods":
@@ -42,10 +44,43 @@ func (ki *KubernetesInventory) gatherNode(n corev1.Node, acc telegraf.Accumulato
 		case "cpu":
 			fields["allocatable_cpu_cores"] = ki.convertQuantity(val.String(), 1)
 			fields["allocatable_millicpu_cores"] = ki.convertQuantity(val.String(), 1000)
+		case "ephemeral-storage":
+			fields["allocatable_ephemeral_storage_bytes"] = ki.convertQuantity(val.String(), 1)
 		case "memory":
 			fields["allocatable_memory_bytes"] = ki.convertQuantity(val.String(), 1)
 		case "pods":
 			fields["allocatable_pods"] = atoi(val.String())
+		}
+	}
+
+	fields["condition_disk_pressure"] = false
+	fields["condition_memory_pressure"] = false
+	fields["condition_network_available"] = false
+	fields["condition_pid_pressure"] = false
+	fields["condition_ready"] = false
+
+	for _, condition := range n.Status.Conditions {
+		switch condition.Type {
+		case corev1.NodeDiskPressure:
+			if condition.Status == corev1.ConditionTrue {
+				fields["condition_disk_pressure"] = true
+			}
+		case corev1.NodeMemoryPressure:
+			if condition.Status == corev1.ConditionTrue {
+				fields["condition_memory_pressure"] = true
+			}
+		case corev1.NodeNetworkUnavailable:
+			if condition.Status == corev1.ConditionFalse {
+				fields["condition_network_available"] = true
+			}
+		case corev1.NodePIDPressure:
+			if condition.Status == corev1.ConditionTrue {
+				fields["condition_pid_pressure"] = true
+			}
+		case corev1.NodeReady:
+			if condition.Status == corev1.ConditionTrue {
+				fields["condition_ready"] = true
+			}
 		}
 	}
 
