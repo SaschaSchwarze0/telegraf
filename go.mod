@@ -233,6 +233,7 @@ require (
 	k8s.io/api v0.30.1
 	k8s.io/apimachinery v0.31.1
 	k8s.io/client-go v0.30.1
+	k8s.io/metrics v0.30.1
 	layeh.com/radius v0.0.0-20221205141417-e7fbddd11d68
 	modernc.org/sqlite v1.33.1
 )
