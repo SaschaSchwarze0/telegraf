@@ -13,6 +13,8 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	metricsv1beta1 "k8s.io/metrics/pkg/apis/metrics/v1beta1"
+	metrics "k8s.io/metrics/pkg/client/clientset/versioned"
 
 	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/plugins/common/tls"
@@ -22,6 +24,7 @@ type client struct {
 	namespace string
 	timeout   time.Duration
 	*kubernetes.Clientset
+	metricsClient metrics.Interface
 }
 
 func newClient(baseURL, namespace, bearerTokenFile string, timeout time.Duration, tlsConfig tls.ClientConfig) (*client, error) {
@@ -56,10 +59,16 @@ func newClient(baseURL, namespace, bearerTokenFile string, timeout time.Duration
 		return nil, err
 	}
 
+	metricsClient, err := metrics.NewForConfig(clientConfig)
+	if err != nil {
+		return nil, err
+	}
+
 	return &client{
-		Clientset: c,
-		timeout:   timeout,
-		namespace: namespace,
+		Clientset:     c,
+		metricsClient: metricsClient,
+		timeout:       timeout,
+		namespace:     namespace,
 	}, nil
 }
 
@@ -146,6 +155,12 @@ func (c *client) getStatefulSets(ctx context.Context) (*appsv1.StatefulSetList, 
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 	return c.AppsV1().StatefulSets(c.namespace).List(ctx, metav1.ListOptions{})
+}
+
+func (c *client) getPodMetrics(ctx context.Context) (*metricsv1beta1.PodMetricsList, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+	return c.metricsClient.MetricsV1beta1().PodMetricses("").List(ctx, metav1.ListOptions{})
 }
 
 func (c *client) getResourceQuotas(ctx context.Context) (*corev1.ResourceQuotaList, error) {
