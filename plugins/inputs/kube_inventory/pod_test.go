@@ -8,6 +8,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	metricsv1beta1 "k8s.io/metrics/pkg/apis/metrics/v1beta1"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/testutil"
@@ -448,7 +449,7 @@ func TestPod(t *testing.T) {
 		require.NoError(t, ks.createSelectorFilters())
 		acc := new(testutil.Accumulator)
 		for _, pod := range ((v.handler.responseMap["/pods/"]).(*corev1.PodList)).Items {
-			ks.gatherPod(pod, acc)
+			ks.gatherPod(pod, []metricsv1beta1.ContainerMetrics{}, acc)
 		}
 
 		err := acc.FirstError()
@@ -683,7 +684,7 @@ func TestPodSelectorFilter(t *testing.T) {
 		require.NoError(t, ks.createSelectorFilters())
 		acc := new(testutil.Accumulator)
 		for _, pod := range ((v.handler.responseMap["/pods/"]).(*corev1.PodList)).Items {
-			ks.gatherPod(pod, acc)
+			ks.gatherPod(pod, []metricsv1beta1.ContainerMetrics{}, acc)
 		}
 
 		// Grab selector tags
@@ -993,7 +994,7 @@ func TestPodPendingContainers(t *testing.T) {
 		require.NoError(t, ks.createSelectorFilters())
 		acc := new(testutil.Accumulator)
 		for _, pod := range ((v.handler.responseMap["/pods/"]).(*corev1.PodList)).Items {
-			ks.gatherPod(pod, acc)
+			ks.gatherPod(pod, []metricsv1beta1.ContainerMetrics{}, acc)
 		}
 
 		err := acc.FirstError()
