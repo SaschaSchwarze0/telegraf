@@ -3,8 +3,10 @@ package kube_inventory
 import (
 	"context"
 	"strings"
+	"sync"
 
 	corev1 "k8s.io/api/core/v1"
+	metricsv1beta1 "k8s.io/metrics/pkg/apis/metrics/v1beta1"
 
 	"github.com/influxdata/telegraf"
 )
@@ -13,23 +15,54 @@ func collectPods(ctx context.Context, acc telegraf.Accumulator, ki *KubernetesIn
 	var list corev1.PodList
 	listRef := &list
 	var err error
+	var podMetrics *metricsv1beta1.PodMetricsList
 
-	if ki.KubeletURL != "" {
-		err = ki.queryPodsFromKubelet(ki.KubeletURL+"/pods", listRef)
-	} else {
-		listRef, err = ki.client.getPods(ctx, ki.NodeName)
-	}
+	// load pods and pod metrics in parallel
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		var e error
+		if ki.KubeletURL != "" {
+			err = ki.queryPodsFromKubelet(ki.KubeletURL+"/pods", listRef)
+		} else {
+			listRef, err = ki.client.getPods(ctx, ki.NodeName)
+		}
+		if e != nil {
+			acc.AddError(e)
+			err = e
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		var e error
+		podMetrics, e = ki.client.getPodMetrics(ctx)
+		if e != nil {
+			ki.Log.Warnf("Failed to load pod metrics: %v\n", err)
+		}
+	}()
+
+	wg.Wait()
 
 	if err != nil {
 		acc.AddError(err)
 		return
 	}
 	for i := range listRef.Items {
-		ki.gatherPod(&listRef.Items[i], acc)
+		p := &listRef.Items[i]
+		var containerMetrics []metricsv1beta1.ContainerMetrics
+		for _, m := range podMetrics.Items {
+			if m.Name == p.Name && m.Namespace == p.Namespace {
+				containerMetrics = m.Containers
+				break
+			}
+		}
+
+		ki.gatherPod(p, containerMetrics, acc)
 	}
 }
 
-func (ki *KubernetesInventory) gatherPod(p *corev1.Pod, acc telegraf.Accumulator) {
+func (ki *KubernetesInventory) gatherPod(p *corev1.Pod, containerMetrics []metricsv1beta1.ContainerMetrics, acc telegraf.Accumulator) {
 	creationTs := p.GetCreationTimestamp()
 	if creationTs.IsZero() {
 		return
@@ -40,16 +73,21 @@ func (ki *KubernetesInventory) gatherPod(p *corev1.Pod, acc telegraf.Accumulator
 		containerList[p.Status.ContainerStatuses[i].Name] = &p.Status.ContainerStatuses[i]
 	}
 
+	resourceUsageList := map[string]*corev1.ResourceList{}
+	for i := range containerMetrics {
+		resourceUsageList[containerMetrics[i].Name] = &containerMetrics[i].Usage
+	}
+
 	for _, c := range p.Spec.Containers {
 		cs, ok := containerList[c.Name]
 		if !ok {
 			cs = &corev1.ContainerStatus{}
 		}
-		ki.gatherPodContainer(p, *cs, c, acc)
+		ki.gatherPodContainer(p, *cs, c, resourceUsageList[c.Name], acc)
 	}
 }
 
-func (ki *KubernetesInventory) gatherPodContainer(p *corev1.Pod, cs corev1.ContainerStatus, c corev1.Container, acc telegraf.Accumulator) {
+func (ki *KubernetesInventory) gatherPodContainer(p *corev1.Pod, cs corev1.ContainerStatus, c corev1.Container, cru *corev1.ResourceList, acc telegraf.Accumulator) {
 	stateCode := 3
 	stateReason := ""
 	state := "unknown"
@@ -132,36 +170,15 @@ func (ki *KubernetesInventory) gatherPodContainer(p *corev1.Pod, cs corev1.Conta
 		}
 	}
 
-	for _, val := range p.Status.Conditions {
-		conditionfields := map[string]interface{}{}
-		conditiontags := map[string]string{
-			"container_name": c.Name,
-			"image":          splitImage[0],
-			"status":         string(val.Status),
-			"namespace":      p.Namespace,
-			"node_name":      p.Spec.NodeName,
-			"pod_name":       p.Name,
-			"condition":      string(val.Type),
-		}
-		if len(splitImage) == 2 {
-			conditiontags["version"] = splitImage[1]
-		}
-		running := 0
-		podready := 0
-		if val.Status == "True" {
-			if val.Type == "Ready" {
-				podready = 1
+	if cru != nil {
+		for resourceName, val := range *cru {
+			switch resourceName {
+			case "cpu":
+				fields["resource_usage_millicpu_units"] = ki.convertQuantity(val.String(), 1000)
+			case "memory":
+				fields["resource_usage_memory_bytes"] = ki.convertQuantity(val.String(), 1)
 			}
-			running = 1
-		} else if val.Status == "Unknown" {
-			if val.Type == "Ready" {
-				podready = 0
-			}
-			running = 2
 		}
-		conditionfields["status_condition"] = running
-		conditionfields["ready"] = podready
-		acc.AddFields(podContainerMeasurement, conditionfields, conditiontags)
 	}
 
 	acc.AddFields(podContainerMeasurement, fields, tags)
