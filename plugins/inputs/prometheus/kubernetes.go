@@ -12,6 +12,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -419,6 +420,14 @@ func registerPod(pod *corev1.Pod, p *Prometheus) {
 			tags[k] = v
 		}
 	}
+
+	if len(pod.OwnerReferences) == 1 && pod.OwnerReferences[0].Kind == "ReplicaSet" {
+		replicaSetName := pod.OwnerReferences[0].Name
+		lastDash := strings.LastIndex(replicaSetName, "-")
+		deploymentName := replicaSetName[:lastDash-1]
+		tags["deployment_name"] = deploymentName
+	}
+
 	podURL := addressToURL(targetURL, targetURL.Hostname())
 
 	// Locks earlier if using cAdvisor calls - makes a new list each time
