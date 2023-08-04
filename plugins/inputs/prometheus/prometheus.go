@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -56,6 +57,9 @@ type Prometheus struct {
 	MetricVersion        int               `toml:"metric_version"`
 	URLTag               string            `toml:"url_tag"`
 	IgnoreTimestamp      bool              `toml:"ignore_timestamp"`
+
+	// Filtering
+	MetricsIncluded []string `toml:"metrics_included"`
 
 	// Kubernetes service discovery
 	MonitorPods                 bool                `toml:"monitor_kubernetes_pods"`
@@ -582,6 +586,10 @@ func (p *Prometheus) gatherURL(u urlAndAddress, acc telegraf.Accumulator) (map[s
 	}
 
 	for _, metric := range metrics {
+		if len(p.MetricsIncluded) > 0 && !slices.Contains(p.MetricsIncluded, metric.Name()) {
+			continue
+		}
+
 		tags := metric.Tags()
 		// strip user and password from URL
 		u.originalURL.User = nil
